@@ -4,23 +4,31 @@ require 'pp'
 class ExceptionNotifier
   class Notifier < ActionMailer::Base
     self.mailer_name = 'exception_notifier'
-    self.view_paths << "#{File.dirname(__FILE__)}/views"
+
+    #Append application view path to the ExceptionNotifier lookup context.
+    self.append_view_path Rails.root.nil? ? "app/views" : "#{Rails.root}/app/views"  if defined?(Rails)
+    self.append_view_path "#{File.dirname(__FILE__)}/views"
 
     class << self
+      attr_writer :default_sender_address
+      attr_writer :default_exception_recipients
+      attr_writer :default_email_prefix
+      attr_writer :default_sections
+
       def default_sender_address
-        %("Exception Notifier" <exception.notifier@default.com>)
+        @default_sender_address || %("Exception Notifier" <exception.notifier@default.com>)
       end
 
       def default_exception_recipients
-        []
+        @default_exception_recipients || []
       end
 
       def default_email_prefix
-        "[ERROR] "
+        @default_email_prefix || "[ERROR] "
       end
 
       def default_sections
-        %w(request session environment backtrace)
+        @default_sections || %w(request session environment backtrace)
       end
 
       def default_options
@@ -31,11 +39,16 @@ class ExceptionNotifier
       end
     end
 
+    class MissingController
+      def method_missing(*args, &block)
+      end
+    end
+
     def exception_notification(env, exception)
       @env        = env
       @exception  = exception
       @options    = (env['exception_notifier.options'] || {}).reverse_merge(self.class.default_options)
-      @controller = env['action_controller.instance']
+      @kontroller = env['action_controller.instance'] || MissingController.new
       @request    = ActionDispatch::Request.new(env)
       @backtrace  = clean_backtrace(exception)
       @sections   = @options[:sections]
@@ -45,22 +58,51 @@ class ExceptionNotifier
         instance_variable_set("@#{name}", value)
       end
 
-      content_type "text/plain"
+      prefix  = "#{@options[:email_prefix]}#{@kontroller.controller_name}##{@kontroller.action_name}"
+      subject = "#{prefix} (#{@exception.class}) #{@exception.message.inspect}"
+      subject = subject.length > 120 ? subject[0...120] + "..." : subject
 
-      prefix   = "#{@options[:email_prefix]}#{@controller.controller_name}##{@controller.action_name}"
-      subject    "#{prefix} (#{@exception.class}) #{@exception.message.inspect}"
+      mail(:to => @options[:exception_recipients], :from => @options[:sender_address], :subject => subject) do |format|
+        format.text { render "#{mailer_name}/exception_notification" }
+      end
+    end
 
-      recipients @options[:exception_recipients]
-      from       @options[:sender_address]
+    def background_exception_notification(exception)
+      if @notifier = Rails.application.config.middleware.detect{ |x| x.klass == ExceptionNotifier }
+        @options = (@notifier.args.first || {}).reverse_merge(self.class.default_options)
+        subject  = "#{@options[:email_prefix]} (#{exception.class}) #{exception.message.inspect}"
 
-      render "#{mailer_name}/exception_notification"
+        @exception = exception
+        @backtrace = exception.backtrace || []
+        @sections  = %w{backtrace}
+
+        mail(:to => @options[:exception_recipients], :from => @options[:sender_address], :subject => subject) do |format|
+          format.text { render "#{mailer_name}/background_exception_notification" }
+        end.deliver
+      end
     end
 
     private
-      def clean_backtrace(exception)
-        Rails.respond_to?(:backtrace_cleaner) ?
-          Rails.backtrace_cleaner.send(:filter, exception.backtrace) :
-          exception.backtrace
+
+    def clean_backtrace(exception)
+      if Rails.respond_to?(:backtrace_cleaner)
+       Rails.backtrace_cleaner.send(:filter, exception.backtrace)
+      else
+       exception.backtrace
       end
+    end
+
+    helper_method :inspect_object
+
+    def inspect_object(object)
+      case object
+      when Hash, Array
+        object.inspect
+      when ActionController::Base
+        "#{object.controller_name}##{object.action_name}"
+      else
+        object.to_s
+      end
+    end
   end
 end
