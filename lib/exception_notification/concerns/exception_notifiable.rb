@@ -66,6 +66,7 @@ module ExceptionNotification::Concerns::ExceptionNotifiable
         render_404
 
       else
+        notify_airbrake(exception)
         render_500
 
         deliverer = self.class.exception_data
