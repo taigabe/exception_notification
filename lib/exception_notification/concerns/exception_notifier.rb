@@ -16,7 +16,7 @@ module ExceptionNotification::Concerns::ExceptionNotifier
     @@sections = %w(request session environment backtrace)
     cattr_accessor :sections
 
-    self.template_root = "#{File.dirname(__FILE__)}/../views"
+    self.template_root = "#{File.dirname(__FILE__)}/../../../views"
   end
 
   module ClassMethods
