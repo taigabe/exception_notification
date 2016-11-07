@@ -77,12 +77,16 @@ module ExceptionNotifiable
       end
     end
 
+    def render_custom_error(msg)
+      @msg = msg
+      render 'errors/custom_error.html.erb', :status => "404 Error", :content_type => 'text'
+    end
+
     def rescue_action_in_public(exception)
       case exception
         when *self.class.exceptions_to_treat_as_404
           render_404
-
-        else          
+        else
           render_500
 
           deliverer = self.class.exception_data
